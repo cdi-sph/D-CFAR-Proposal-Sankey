@@ -1,0 +1,232 @@
+
+<style>
+#sk-tip {
+  position: absolute;
+  background: var(--color-background-primary);
+  border: 0.5px solid var(--color-border-secondary);
+  border-radius: var(--border-radius-md);
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--color-text-primary);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.1s;
+  white-space: nowrap;
+  z-index: 10;
+}
+#sk-outer {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  position: relative;
+}
+#sk-outer svg {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+}
+</style>
+
+<div style="padding: 4px 0 8px;">
+  <div id="sk-outer">
+    <div id="sk-tip"></div>
+  </div>
+  <div style="font-size:12px;color:var(--color-text-tertiary);margin-top:6px;">
+    n=90 proposals. Band width proportional to N. Hover bands for flow details.
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.min.js"></script>
+<script>
+function build() {
+  const outer = document.getElementById('sk-outer');
+  d3.select('#sk-outer svg').remove();
+
+  const W = outer.offsetWidth || 800;
+  const H = Math.round(W * 9 / 16);
+  outer.style.height = H + 'px';
+
+  const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const textCol = isDark ? 'rgba(255,255,255,0.82)' : 'rgba(0,0,0,0.80)';
+  const subCol  = isDark ? 'rgba(255,255,255,0.50)' : 'rgba(0,0,0,0.48)';
+  const linkOp  = isDark ? 0.28 : 0.22;
+
+  const lPad = Math.round(W * 0.155);
+  const rPad = Math.round(W * 0.155);
+  const pad  = { top: 36, right: rPad, bottom: 20, left: lPad };
+
+  // Pending+Unknown combined = 23+17 = 40
+  const nodeList = [
+    { id:'proposals',    label:'Proposals',           sub:'n=90', col:0, color:'#888780' },
+    { id:'consult',      label:'Consult',             sub:'n=27', col:1, color:'#1D9E75' },
+    { id:'pilot',        label:'Pilot Awards',        sub:'n=13', col:1, color:'#7F77DD' },
+    { id:'sc_other',     label:'Studio, Collab\n& Other', sub:'n=21', col:1, color:'#378ADD' },
+    { id:'bc_retreat',   label:'Bootcamp\n& Retreat', sub:'n=20', col:1, color:'#EF9F27' },
+    { id:'hip',          label:'HIP',                 sub:'n=9',  col:1, color:'#D85A30' },
+    { id:'submitted',    label:'Submitted',           sub:'n=50', col:2, color:'#185FA5' },
+    { id:'not_submitted',label:'Not Submitted\nor Pending', sub:'n=40', col:2, color:'#BA7517' },
+    { id:'awarded',      label:'Awarded',             sub:'n=13', col:3, color:'#1D9E75' },
+    { id:'not_awarded',  label:'Not Awarded',         sub:'n=25', col:3, color:'#E24B4A' },
+    { id:'pend_fund',    label:'Pending',             sub:'n=52', col:3, color:'#BA7517' },
+  ];
+
+  const ni = Object.fromEntries(nodeList.map((n,i) => [n.id, i]));
+  function L(a,b,v){ return { source:ni[a], target:ni[b], value:v }; }
+
+  const links = [
+    L('proposals','consult',27), L('proposals','pilot',13),
+    L('proposals','sc_other',21), L('proposals','bc_retreat',20), L('proposals','hip',9),
+    // activity -> submitted (merged pending+unknown into not_submitted)
+    L('consult','submitted',21),      L('consult','not_submitted',6),
+    L('pilot','submitted',3),         L('pilot','not_submitted',10),
+    L('sc_other','submitted',18),     L('sc_other','not_submitted',3),
+    L('bc_retreat','submitted',5),    L('bc_retreat','not_submitted',15),
+    L('hip','submitted',3),           L('hip','not_submitted',6),
+    // submitted -> funding
+    L('submitted','awarded',13), L('submitted','not_awarded',22), L('submitted','pend_fund',15),
+    L('not_submitted','not_awarded',3), L('not_submitted','pend_fund',37),
+  ];
+
+  const sankey = d3.sankey()
+    .nodeId(d => d.index)
+    .nodeWidth(22)
+    .nodePadding(14)
+    .extent([[pad.left, pad.top], [W - pad.right, H - pad.bottom]])
+    .nodeAlign(d3.sankeyJustify);
+
+  const graph = sankey({
+    nodes: nodeList.map((n,i) => ({ ...n, index:i })),
+    links: links.map(l => ({ ...l }))
+  });
+
+  const svg = d3.select('#sk-outer').append('svg')
+    .attr('viewBox', `0 0 ${W} ${H}`)
+    .attr('preserveAspectRatio', 'xMidYMid meet');
+
+  svg.append('g').attr('fill','none')
+    .selectAll('path')
+    .data(graph.links)
+    .join('path')
+    .attr('d', d3.sankeyLinkHorizontal())
+    .attr('stroke', d => nodeList[d.source.index].color)
+    .attr('stroke-width', d => Math.max(1, d.width))
+    .attr('stroke-opacity', linkOp)
+    .style('cursor','default')
+    .on('mouseover', function(event, d) {
+      d3.select(this).attr('stroke-opacity', linkOp * 3.5);
+      const tip = document.getElementById('sk-tip');
+      tip.textContent = `${nodeList[d.source.index].label.replace('\n',' ')} → ${nodeList[d.target.index].label.replace('\n',' ')}: n=${d.value}`;
+      tip.style.opacity = 1;
+    })
+    .on('mousemove', function(event) {
+      const box = document.getElementById('sk-outer').getBoundingClientRect();
+      const tip = document.getElementById('sk-tip');
+      let lx = event.clientX - box.left + 12;
+      let ly = event.clientY - box.top - 36;
+      if (lx + 280 > W) lx -= 290;
+      tip.style.left = lx + 'px'; tip.style.top = ly + 'px';
+    })
+    .on('mouseleave', function() {
+      d3.select(this).attr('stroke-opacity', linkOp);
+      document.getElementById('sk-tip').style.opacity = 0;
+    });
+
+  svg.append('g')
+    .selectAll('rect')
+    .data(graph.nodes)
+    .join('rect')
+    .attr('x', d => d.x0).attr('y', d => d.y0)
+    .attr('width', d => d.x1 - d.x0)
+    .attr('height', d => Math.max(2, d.y1 - d.y0))
+    .attr('fill', d => nodeList[d.index].color)
+    .attr('rx', 3);
+
+  function addLabel(sel, getX, anchor) {
+    sel.each(function(d) {
+      const n = nodeList[d.index];
+      const mid = (d.y0 + d.y1) / 2;
+      const nodeH = d.y1 - d.y0;
+      const x = getX(d);
+      const lines = n.label.split('\n');
+      const multi = lines.length > 1;
+      const showSub = nodeH >= 28;
+
+      if (multi) {
+        d3.select(this.parentNode).append('text')
+          .attr('x', x).attr('y', mid - 11)
+          .attr('text-anchor', anchor).attr('dominant-baseline','central')
+          .attr('font-size', 14).attr('font-weight', 500).attr('fill', textCol)
+          .text(lines[0]);
+        d3.select(this.parentNode).append('text')
+          .attr('x', x).attr('y', mid + 3)
+          .attr('text-anchor', anchor).attr('dominant-baseline','central')
+          .attr('font-size', 14).attr('font-weight', 500).attr('fill', textCol)
+          .text(lines[1]);
+        if (showSub && nodeH >= 54) {
+          d3.select(this.parentNode).append('text')
+            .attr('x', x).attr('y', mid + 17)
+            .attr('text-anchor', anchor).attr('dominant-baseline','central')
+            .attr('font-size', 13).attr('fill', subCol)
+            .text(n.sub);
+        }
+      } else {
+        d3.select(this.parentNode).append('text')
+          .attr('x', x).attr('y', showSub ? mid - 8 : mid)
+          .attr('text-anchor', anchor).attr('dominant-baseline','central')
+          .attr('font-size', 15).attr('font-weight', 500).attr('fill', textCol)
+          .text(n.label);
+        if (showSub) {
+          d3.select(this.parentNode).append('text')
+            .attr('x', x).attr('y', mid + 9)
+            .attr('text-anchor', anchor).attr('dominant-baseline','central')
+            .attr('font-size', 13).attr('fill', subCol)
+            .text(n.sub);
+        }
+      }
+      d3.select(this).remove();
+    });
+  }
+
+  svg.append('g').selectAll('text')
+    .data(graph.nodes.filter(d => nodeList[d.index].col <= 1))
+    .join('text')
+    .call(addLabel, d => d.x0 - 10, 'end');
+
+  svg.append('g').selectAll('text')
+    .data(graph.nodes.filter(d => nodeList[d.index].col >= 2))
+    .join('text')
+    .call(addLabel, d => d.x1 + 10, 'start');
+
+  const hdrLabels = ['Proposals','Activity','Submission\nStatus','Funding'];
+  const colNodes = [0,1,2,3].map(c => graph.nodes.filter(d => nodeList[d.index].col === c));
+  const colCx = colNodes.map(ns => ns.length ? (ns[0].x0 + ns[0].x1) / 2 : 0);
+  svg.append('g').selectAll('text')
+    .data(hdrLabels)
+    .join('text')
+    .each(function(d, i) {
+      const lines = d.split('\n');
+      if (lines.length === 1) {
+        d3.select(this)
+          .attr('x', colCx[i]).attr('y', 20)
+          .attr('text-anchor','middle')
+          .attr('font-size', 13).attr('font-weight', 500).attr('fill', subCol)
+          .text(d);
+      } else {
+        d3.select(this.parentNode).append('text')
+          .attr('x', colCx[i]).attr('y', 14)
+          .attr('text-anchor','middle')
+          .attr('font-size', 13).attr('font-weight', 500).attr('fill', subCol)
+          .text(lines[0]);
+        d3.select(this.parentNode).append('text')
+          .attr('x', colCx[i]).attr('y', 27)
+          .attr('text-anchor','middle')
+          .attr('font-size', 13).attr('font-weight', 500).attr('fill', subCol)
+          .text(lines[1]);
+        d3.select(this).remove();
+      }
+    });
+}
+
+build();
+window.addEventListener('resize', build);
+</script>
